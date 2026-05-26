@@ -90,7 +90,14 @@ class UserSessionManager implements IUserSessionManager {
   errorHandler: IErrorHandler;
   httpClient: IHttpClient;
   logger: ILogger;
-  serverSideCookieDebounceFuncs: Record<UserSessionKey, number>;
+  /**
+   * Shared debounce timer for batching server-side cookie requests.
+   */
+  serverSideCookieBatchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Accumulator map collecting session keys to batch into a single request.
+   */
+  serverSideCookieBatchAccumulator: SessionToCookiesMap;
   /**
    * Tracks whether a server-side cookie setting request is in progress or not.
    */
@@ -109,7 +116,8 @@ class UserSessionManager implements IUserSessionManager {
     this.errorHandler = errorHandler;
     this.httpClient = httpClient;
     this.onError = this.onError.bind(this);
-    this.serverSideCookieDebounceFuncs = {} as Record<UserSessionKey, number>;
+    this.serverSideCookieBatchDebounceTimer = undefined;
+    this.serverSideCookieBatchAccumulator = {} as SessionToCookiesMap;
     this.serverSideCookiesRequestInProgress = {} as Record<UserSessionKey, boolean>;
   }
 
@@ -556,27 +564,30 @@ class UserSessionManager implements IUserSessionManager {
           // Mark the requests as in progress.
           this.serverSideCookiesRequestInProgress[sessionKey] = true;
 
-          if (this.serverSideCookieDebounceFuncs[sessionKey]) {
+          // Accumulate the key into the shared batch instead of creating a per-key request
+          this.serverSideCookieBatchAccumulator[sessionKey] = { name: cookieName };
+
+          if (this.serverSideCookieBatchDebounceTimer) {
             (globalThis as typeof window).clearTimeout(
-              this.serverSideCookieDebounceFuncs[sessionKey],
+              this.serverSideCookieBatchDebounceTimer,
             );
           }
 
-          this.serverSideCookieDebounceFuncs[sessionKey] = (globalThis as typeof window).setTimeout(
+          this.serverSideCookieBatchDebounceTimer = (globalThis as typeof window).setTimeout(
             () => {
-              // Create a map of session key to cookie name
-              const sessionToCookiesMap: SessionToCookiesMap = {
-                [sessionKey]: {
-                  name: cookieName,
-                },
-              };
+              const batch = { ...this.serverSideCookieBatchAccumulator };
+              this.serverSideCookieBatchAccumulator = {} as SessionToCookiesMap;
+              this.serverSideCookieBatchDebounceTimer = undefined;
 
+              const cookieStore = this.storeManager.getStore(
+                storageClientDataStoreNameMap[COOKIE_STORAGE] as string,
+              );
               this.setServerSideCookies(
-                sessionToCookiesMap,
-                (cookieName, cookieValue) => {
-                  curStore?.set(cookieName, cookieValue);
+                batch,
+                (name, value) => {
+                  cookieStore?.set(name, value);
                 },
-                curStore,
+                cookieStore,
               );
             },
             SERVER_SIDE_COOKIES_DEBOUNCE_TIME,
