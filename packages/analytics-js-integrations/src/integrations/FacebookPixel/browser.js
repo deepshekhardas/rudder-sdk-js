@@ -53,21 +53,26 @@ class FacebookPixel {
   }
 
   init() {
-    window._fbq = function () {
-      if (window.fbq.callMethod) {
-        window.fbq.callMethod.apply(window.fbq, arguments);
-      } else {
-        window.fbq.queue.push(arguments);
-      }
-    };
+    // Only set up the global fbq polyfill once to avoid overwriting
+    // Facebook's internal state when multiple pixel destinations exist.
+    // See: https://github.com/rudderlabs/rudder-sdk-js/issues/2587
+    if (!window._fbq) {
+      window._fbq = function () {
+        if (window.fbq.callMethod) {
+          window.fbq.callMethod.apply(window.fbq, arguments);
+        } else {
+          window.fbq.queue.push(arguments);
+        }
+      };
 
-    window.fbq = window.fbq || window._fbq;
-    window.fbq.push = window.fbq;
-    window.fbq.loaded = true;
-    window.fbq.disablePushState = true; // disables automatic pageview tracking
-    window.fbq.allowDuplicatePageViews = true; // enables fb
-    window.fbq.version = '2.0';
-    window.fbq.queue = [];
+      window.fbq = window.fbq || window._fbq;
+      window.fbq.push = window.fbq;
+      window.fbq.loaded = true;
+      window.fbq.disablePushState = true; // disables automatic pageview tracking
+      window.fbq.allowDuplicatePageViews = true; // enables fb
+      window.fbq.version = '2.0';
+      window.fbq.queue = [];
+    }
     window.fbq('set', 'autoConfig', this.autoConfig, this.pixelId); // toggle autoConfig : sends button click and page metadata
     if (this.advancedMapping) {
       if (this.useUpdatedMapping) {
